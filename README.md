@@ -20,7 +20,7 @@ Tap provides the following benefits:
 
 ![Tap](https://github.com/swansonk14/typed-argument-parser/raw/main/images/tap.png)
 
-See [this poster](https://docs.google.com/presentation/d/1AirN6gpiq4P1L8K003EsXmobVxP3A4AVEIR2KOEQN7Y/edit?usp=sharing), which we presented at [PyCon 2020](https://us.pycon.org/2020/), for a presentation of some of the relevant concepts we used to guide the development of Tap. 
+See [this poster](https://docs.google.com/presentation/d/1AirN6gpiq4P1L8K003EsXmobVxP3A4AVEIR2KOEQN7Y/edit?usp=sharing), which we presented at [PyCon 2020](https://us.pycon.org/2020/), for a presentation of some of the relevant concepts we used to guide the development of Tap.
 
 As of version 1.8.0, Tap includes `tapify`, which runs functions or initializes classes with arguments parsed from the command line. We show an example below.
 
@@ -41,7 +41,7 @@ Running `python square.py --num 2` will print `The square of your number is 4.0.
 
 Tap requires Python 3.8+
 
-To install Tap from PyPI run: 
+To install Tap from PyPI run:
 
 ```
 pip install typed-argument-parser
@@ -210,6 +210,21 @@ optional arguments:
   -h, --help  show this help message and exit
 ```
 
+Tap need to read the source code to get the comments, which is expensive. If performance is a concern, it is possible to cache or disable the class variable parsing from the source code with the `parse_classvar_info` argument.
+
+```python
+from tap import Tap
+
+class MyTap(Tap):
+    x: float  # What am I?
+    pi: float = 3.14  # I'm pi!
+    """Pi is my favorite number!"""
+
+args1 = MyTap(parse_classvar_info="never").parse_args()  # faster, but no help message
+args1 = MyTap().parse_args()  # slower, but with help message
+args2 = MyTap(parse_classvar_info="cached").parse_args()  # faster and with help message
+```
+
 ### Configuring arguments
 To specify behavior beyond what can be specified using arguments as class variables, override the `configure` method.
 `configure` provides access to advanced argument parsing features such as `add_argument` and `add_subparser`.
@@ -261,7 +276,7 @@ str, int, float, bool
 Optional, Optional[str], Optional[int], Optional[float], Optional[bool]
 List, List[str], List[int], List[float], List[bool]
 Set, Set[str], Set[int], Set[float], Set[bool]
-Tuple, Tuple[Type1, Type2, etc.], Tuple[Type, ...]  
+Tuple, Tuple[Type1, Type2, etc.], Tuple[Type, ...]
 Literal
 ```
 
@@ -289,7 +304,7 @@ Each is automatically parsed to their respective types, just like argparse.
 
 If an argument `arg` is specified as `arg: bool` or `arg: bool = False`, then adding the `--arg` flag to the command line will set `arg` to `True`. If `arg` is specified as `arg: bool = True`, then adding `--arg` sets `arg` to `False`.
 
-Note that if the `Tap` instance is created with `explicit_bool=True`, then booleans can be specified on the command line as `--arg True` or `--arg False` rather than `--arg`. Additionally, booleans can be specified by prefixes of `True` and `False` with any capitalization as well as `1` or `0` (e.g. for True, `--arg tRu`, `--arg T`, `--arg 1` all suffice). 
+Note that if the `Tap` instance is created with `explicit_bool=True`, then booleans can be specified on the command line as `--arg True` or `--arg False` rather than `--arg`. Additionally, booleans can be specified by prefixes of `True` and `False` with any capitalization as well as `1` or `0` (e.g. for True, `--arg tRu`, `--arg T`, `--arg 1` all suffice).
 
 #### `Optional`
 
@@ -498,7 +513,7 @@ print(args_data)  # {'package': 'Tap', 'is_cool': True, 'stars': 5}
 
 args_data['stars'] = 2000
 args = args.from_dict(args_data)
-print(args.stars)  # 2000 
+print(args.stars)  # 2000
 ```
 
 Note that `as_dict` does not include attributes set directly on an instance (e.g., `arg` is not included even after setting `args.arg = "hi"` in the code above because `arg` is not an attribute of the `Args` class).
@@ -868,7 +883,7 @@ Running `python person.py --name Jesse --age 1` prints `My name is Jesse.` follo
 
 ### Explicit boolean arguments
 
-Tapify supports explicit specification of boolean arguments (see [bool](#bool) for more details). By default, `explicit_bool=False` and it can be set with `tapify(..., explicit_bool=True)`. 
+Tapify supports explicit specification of boolean arguments (see [bool](#bool) for more details). By default, `explicit_bool=False` and it can be set with `tapify(..., explicit_bool=True)`.
 
 ## Convert to a `Tap` class
 

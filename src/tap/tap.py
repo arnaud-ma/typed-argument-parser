@@ -1,6 +1,7 @@
 import json
 import sys
 import time
+import warnings
 from argparse import ArgumentParser, ArgumentTypeError
 from copy import deepcopy
 from functools import partial
@@ -8,27 +9,45 @@ from pathlib import Path
 from pprint import pformat
 from shlex import quote, split
 from types import MethodType
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, TypeVar, Union, get_type_hints
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    TypeVar,
+    Union,
+    get_type_hints,
+)
+
 from typing_inspect import is_literal_type
 
 from tap.utils import (
-    get_class_variables,
+    ClassVariableInfo,
+    CommentInfo,
+    GitInfo,
+    PathLike,
+    TupleTypeEnforcer,
+    _empty_class_variables,
+    as_python_object,
+    boolean_type,
+    define_python_object_encoder,
+    enforce_reproducibility,
+    fix_py36_copy,
     get_args,
     get_argument_name,
+    get_class_variables,
     get_dest,
+    get_literals,
     get_origin,
-    GitInfo,
     is_option_arg,
     is_positional_arg,
     type_to_str,
-    get_literals,
-    boolean_type,
-    TupleTypeEnforcer,
-    define_python_object_encoder,
-    as_python_object,
-    fix_py36_copy,
-    enforce_reproducibility,
-    PathLike,
 )
 
 if sys.version_info >= (3, 10):
@@ -44,10 +63,19 @@ BOXED_TYPES = BOXED_COLLECTION_TYPES | OPTIONAL_TYPES
 
 
 TapType = TypeVar("TapType", bound="Tap")
-
+ClassVarInfoLiteral = Literal["always", "never", "cached"]
 
 class Tap(ArgumentParser):
     """Tap is a typed argument parser that wraps Python's built-in ArgumentParser."""
+
+    # TODO: remove the `if TYPE_CHECKING` line when we have a way to
+    # ignore class variables. https://github.com/swansonk14/typed-argument-parser/pull/92
+    if TYPE_CHECKING:
+        _cached_class_variables: Optional[ClassVariableInfo] = None
+
+    def __init_subclass__(cls):
+        # we don't want to share the cache between subclasses
+        cls.clear_classvar_cache()
 
     def __init__(
         self,
@@ -55,6 +83,7 @@ class Tap(ArgumentParser):
         underscores_to_dashes: bool = False,
         explicit_bool: bool = False,
         config_files: Optional[List[PathLike]] = None,
+        parse_classvar_info: ClassVarInfoLiteral = "always",
         **kwargs,
     ):
         """Initializes the Tap instance.
@@ -68,6 +97,15 @@ class Tap(ArgumentParser):
                              (e.g., '--arg1 a1 --arg2 a2'). Arguments passed in from the command line
                              overwrite arguments from the configuration files. Arguments in configuration files
                              that appear later in the list overwrite the arguments in previous configuration files.
+        :param parse_classvar_info: Parse the source code of the class itself to extract useful information about
+                                    the class variables. For the moment, it is only used to extract class
+                                    variable comments that are set as help strings. Possible values are:
+                                        - "always"
+                                        - "never"
+                                        - "cached"
+                                    Default is "always". If "cached", be aware that the cache is shared between
+                                    all instances of theclass. If the source code changes, the cache will not be
+                                    updated. Use the `clear_classvar_cache` method to clear the cache.
         :param kwargs: Keyword arguments passed to the super class ArgumentParser.
         """
         # Whether the Tap object has been initialized
@@ -90,6 +128,9 @@ class Tap(ArgumentParser):
 
         # Create a place to put the subparsers
         self._subparser_buffer: List[Tuple[str, type, Dict[str, Any]]] = []
+
+        # Whether to parse help from the comments and strings
+        self.parse_classvar_info = parse_classvar_info
 
         # Get class variables help strings from the comments
         self.class_variables = self._get_class_variables()
@@ -518,9 +559,10 @@ class Tap(ArgumentParser):
 
         return dictionary
 
-    def _get_class_dict(self) -> Dict[str, Any]:
+    @classmethod
+    def _get_class_dict(cls) -> Dict[str, Any]:
         """Returns a dictionary mapping class variable names to values from the class dict."""
-        class_dict = self._get_from_self_and_super(
+        class_dict = cls._get_from_self_and_super(
             extract_func=lambda super_class: dict(getattr(super_class, "__dict__", dict()))
         )
         class_dict = {
@@ -537,35 +579,54 @@ class Tap(ArgumentParser):
 
         return class_dict
 
-    def _get_annotations(self) -> Dict[str, Any]:
+    @classmethod
+    def _get_annotations(cls) -> Dict[str, Any]:
         """Returns a dictionary mapping variable names to their type annotations."""
-        return self._get_from_self_and_super(extract_func=lambda super_class: dict(get_type_hints(super_class)))
+        return cls._get_from_self_and_super(extract_func=lambda super_class: dict(get_type_hints(super_class)))
 
-    def _get_class_variables(self) -> dict:
+    def _get_class_variables(self) -> ClassVariableInfo:
         """Returns a dictionary mapping class variables names to their additional information."""
+        cls = self.__class__
+        if self.parse_classvar_info == "cached" and (cached := cls._cached_class_variables) is not None:
+            return cached
+
         class_variable_names = {**self._get_annotations(), **self._get_class_dict()}.keys()
+        if self.parse_classvar_info == "never":
+            return _empty_class_variables(class_variable_names)
 
         try:
             class_variables = self._get_from_self_and_super(
                 extract_func=lambda super_class: get_class_variables(super_class)
             )
 
-            # Handle edge-case of source code modification while code is running
-            variables_to_add = class_variable_names - class_variables.keys()
-            variables_to_remove = class_variables.keys() - class_variable_names
-
-            for variable in variables_to_add:
-                class_variables[variable] = {"comment": ""}
-
-            for variable in variables_to_remove:
-                class_variables.pop(variable)
         # Exception if inspect.getsource fails to extract the source code
         except Exception:
-            class_variables = {}
-            for variable in class_variable_names:
-                class_variables[variable] = {"comment": ""}
+            warnings.warn(
+                "Unable to extract class variable comments. "
+                "This is likely due to the source code not being available. "
+                "To disable this warning, set parse_help='never' "
+                f"to the initialization of {cls.__name__} "
+                f"(e.g. {cls.__name__}(parse_help=False))"
+            )
+            return _empty_class_variables(class_variable_names)
 
+        # Handle edge-case of source code modification while code is running
+        variables_to_add = class_variable_names - class_variables.keys()
+        variables_to_remove = class_variables.keys() - class_variable_names
+
+        for variable in variables_to_add:
+            class_variables[variable] = CommentInfo(comment="")
+
+        for variable in variables_to_remove:
+            del class_variables[variable]
+
+        cls._cached_class_variables = class_variables
         return class_variables
+
+    @classmethod
+    def clear_classvar_cache(cls) -> None:
+        """Clears the cache of information about class variables."""
+        cls._cached_class_variables = None
 
     def _get_argument_names(self) -> Set[str]:
         """Returns a list of variable names corresponding to the arguments."""
@@ -690,7 +751,7 @@ class Tap(ArgumentParser):
 
         return self
 
-    def _load_from_config_files(self, config_files: Optional[List[str]]) -> List[str]:
+    def _load_from_config_files(self, config_files: Optional[List[PathLike]]) -> List[str]:
         """Loads arguments from a list of configuration files containing command line arguments.
 
         :param config_files: A list of paths to configuration files containing the command line arguments

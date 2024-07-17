@@ -1,12 +1,12 @@
-from argparse import ArgumentTypeError
-from copy import deepcopy
 import os
-from pathlib import Path
 import pickle
 import sys
+import unittest
+from argparse import ArgumentTypeError
+from copy import deepcopy
+from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Iterable, List, Literal, Optional, Set, Tuple, Union
-import unittest
 from unittest import TestCase
 
 from tap import Tap
@@ -1137,6 +1137,42 @@ class ParseExplicitBoolArgsTests(TestCase):
 
         self.test_bool_cases(ExplicitBoolTrueTap)
 
+class ParseClassvarInfoTests(TestCase):
+    def setUp(self) -> None:
+        class ClassVarInfoTap(Tap):
+            arg_int: int # a comment
+            """and a string comment"""
+
+        class ChildClassVarInfoTap(ClassVarInfoTap):
+            arg_int_child: int # a comment for the child
+            """and a string comment for the child"""
+
+        self.ClassVarInfoTap = ClassVarInfoTap
+        self.ChildClassVarInfoTap = ChildClassVarInfoTap
+
+    def test_cached_classvar_info(self):
+        instance = self.ClassVarInfoTap(parse_classvar_info="cached")
+        classvars = {"arg_int": {"comment": "a comment and a string comment"}}
+        self.assertDictEqual(instance.class_variables, classvars)
+
+        instance = self.ChildClassVarInfoTap(parse_classvar_info="cached")
+        classvars = {
+            "arg_int": {"comment": "a comment and a string comment"},
+            "arg_int_child": {"comment": "a comment for the child and a string comment for the child"},
+        }
+        self.assertDictEqual(instance.class_variables, classvars)
+
+    def test_never_classvar_info(self):
+        instance = self.ClassVarInfoTap(parse_classvar_info="never")
+        classvars = {"arg_int": {"comment": ""}}
+        self.assertDictEqual(instance.class_variables, classvars)
+
+        instance = self.ChildClassVarInfoTap(parse_classvar_info="never")
+        classvars = {"arg_int": {"comment": ""}, "arg_int_child": {"comment": ""}}
+        self.assertDictEqual(instance.class_variables, classvars)
+
+    # No need to do the "always" case since that is the default behavior
+    # and is tested in the other tests
 
 class SetTests(TestCase):
     def test_set_non_set_default(self):

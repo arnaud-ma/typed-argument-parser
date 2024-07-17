@@ -1,29 +1,33 @@
-from argparse import ArgumentParser, ArgumentTypeError
-from base64 import b64encode, b64decode
 import copy
-from functools import wraps
 import inspect
-from io import StringIO
-from json import JSONEncoder
 import os
 import pickle
 import re
 import subprocess
 import sys
 import tokenize
+from argparse import ArgumentParser, ArgumentTypeError
+from base64 import b64decode, b64encode
+from functools import wraps
+from io import StringIO
+from json import JSONEncoder
 from typing import (
     Any,
     Callable,
     Dict,
     Generator,
+    Iterable,
     Iterator,
     List,
     Literal,
     Optional,
     Tuple,
+    TypedDict,
     Union,
 )
-from typing_inspect import get_args as typing_inspect_get_args, get_origin as typing_inspect_get_origin
+
+from typing_inspect import get_args as typing_inspect_get_args
+from typing_inspect import get_origin as typing_inspect_get_origin
 
 if sys.version_info >= (3, 10):
     from types import UnionType
@@ -218,8 +222,14 @@ def source_line_to_tokens(obj: object) -> Dict[int, List[Dict[str, Union[str, in
 
     return line_to_tokens
 
+class CommentInfo(TypedDict):
+    comment: str
 
-def get_class_variables(cls: type) -> Dict[str, Dict[str, str]]:
+
+ClassVariableInfo = Dict[str, CommentInfo]
+
+
+def get_class_variables(cls: type) -> ClassVariableInfo:
     """Returns a dictionary mapping class variables to their additional information (currently just comments)."""
     # Get mapping from line number to tokens
     line_to_tokens = source_line_to_tokens(cls)
@@ -269,6 +279,10 @@ def get_class_variables(cls: type) -> Dict[str, Dict[str, str]]:
             break
 
     return variable_to_comment
+
+
+def _empty_class_variables(variable_names: Iterable[str]) -> ClassVariableInfo:
+    return {variable: CommentInfo(comment="") for variable in variable_names}
 
 
 def get_literals(literal: Literal, variable: str) -> Tuple[Callable[[str], Any], List[str]]:
